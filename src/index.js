@@ -8,9 +8,7 @@
 import { connect } from 'cloudflare:sockets';
 
 // 环境变量声明（运行时由 injectEnv 注入）
-let DOMAIN_MONITOR, TOKEN, SITE_NAME, LOGO_URL,
-    BACKGROUND_URL, MOBILE_BACKGROUND_URL,
-    TG_TOKEN, TG_ID, WHOISJSON_API_KEY;
+let DOMAIN_MONITOR, TOKEN, SITE_NAME, LOGO_URL, BACKGROUND_URL, MOBILE_BACKGROUND_URL, TG_TOKEN, TG_ID, WHOISJSON_API_KEY, BARK_SERVER_URL, BARK_DEVICE_KEY, BARK_GROUP, BARK_SOUND, BARK_ICON;
 
 // 将环境变量注入模块作用域，使已有的 typeof VAR !== 'undefined' 检查继续工作
 function injectEnv(env) {
@@ -23,6 +21,8 @@ function injectEnv(env) {
 	if (env.TG_TOKEN !== undefined) TG_TOKEN = env.TG_TOKEN;
 	if (env.TG_ID !== undefined) TG_ID = env.TG_ID;
 	if (env.WHOISJSON_API_KEY !== undefined) WHOISJSON_API_KEY = env.WHOISJSON_API_KEY;
+	if (env.BARK_SERVER_URL !== undefined) BARK_SERVER_URL = env.BARK_SERVER_URL;
+	if (env.BARK_DEVICE_KEY !== undefined) BARK_DEVICE_KEY = env.BARK_DEVICE_KEY;
 }
 
 // ================================
@@ -44,6 +44,12 @@ const DEFAULT_TOKEN = ''; // 默认密码，留空则使用'domain'，外置变�
 // Telegram通知配置
 const DEFAULT_TG_TOKEN = ''; // Telegram机器人Token，外置变量为TG_TOKEN
 const DEFAULT_TG_ID = '';    // Telegram聊天ID，外置变量为TG_ID
+// Bark通知配置
+const DEFAULT_BARK_SERVER_URL = 'https://api.day.app'; // Bark服务器地址，外置变量为BARK_SERVER_URL
+const DEFAULT_BARK_DEVICE_KEY = ''; // Bark设备Key，外置变量为BARK_DEVICE_KEY
+const DEFAULT_BARK_GROUP = 'Domain-AutoCheck'; // Bark通知分组，外置变量为BARK_GROUP
+const DEFAULT_BARK_SOUND = ''; // Bark通知声音，外置变量为BARK_SOUND
+const DEFAULT_BARK_ICON = ''; // Bark通知图标，外置变量为BARK_ICON
 
 // 网站标题配置
 const DEFAULT_SITE_NAME = ''; // 默认网站标题，外置变量为SITE_NAME
@@ -6931,7 +6937,269 @@ async function sendTelegramMessage(config, message) {
   
   return await response.json();
 }
+// ================================
+// Bark 通知功能
+// ================================
 
+function normalizeBarkServerUrl(url) {
+  const value = String(url || '').trim() || DEFAULT_BARK_SERVER_URL;
+  return value.replace(/\/+$/, '');
+}
+
+function stripHtmlTags(value) {
+  return String(value || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .trim();
+}
+
+async function getBarkConfig() {
+  const envConfig = {
+    enabled: Boolean(typeof BARK_DEVICE_KEY !== 'undefined' && BARK_DEVICE_KEY),
+    serverUrl: typeof BARK_SERVER_URL !== 'undefined' && BARK_SERVER_URL ? BARK_SERVER_URL : DEFAULT_BARK_SERVER_URL,
+    deviceKey: typeof BARK_DEVICE_KEY !== 'undefined' && BARK_DEVICE_KEY ? BARK_DEVICE_KEY : DEFAULT_BARK_DEVICE_KEY,
+    group: typeof BARK_GROUP !== 'undefined' && BARK_GROUP ? BARK_GROUP : DEFAULT_BARK_GROUP,
+    sound: typeof BARK_SOUND !== 'undefined' && BARK_SOUND ? BARK_SOUND : DEFAULT_BARK_SOUND,
+    icon: typeof BARK_ICON !== 'undefined' && BARK_ICON ? BARK_ICON : DEFAULT_BARK_ICON,
+  };
+
+  try {
+    const savedConfig = await DOMAIN_MONITOR.get('bark_config', 'json');
+    return {
+      ...envConfig,
+      ...(savedConfig || {}),
+      // 环境变量优先：如果设置了 BARK_DEVICE_KEY，则强制使用环境变量中的 key
+      deviceKey: envConfig.deviceKey || savedConfig?.deviceKey || '',
+      serverUrl: envConfig.serverUrl || savedConfig?.serverUrl || DEFAULT_BARK_SERVER_URL,
+      group: envConfig.group || savedConfig?.group || DEFAULT_BARK_GROUP,
+      sound: envConfig.sound || savedConfig?.sound || '',
+      icon: envConfig.icon || savedConfig?.icon || '',
+    };
+  } catch (error) {
+    return envConfig;
+  }
+}
+
+async function saveBarkConfig(config) {
+  const barkConfig = {
+    enabled: Boolean(config.enabled),
+    serverUrl: normalizeBarkServerUrl(config.serverUrl || DEFAULT_BARK_SERVER_URL),
+    deviceKey: String(config.deviceKey || '').trim(),
+    group: String(config.group || DEFAULT_BARK_GROUP).trim(),
+    sound: String(config.sound || '').trim(),
+    icon: String(config.icon || '').trim(),
+  };
+
+  await DOMAIN_MONITOR.put('bark_config', JSON.stringify(barkConfig));
+  return barkConfig;
+}
+
+async function sendBarkMessage(title, body, options = {}) {
+  try {
+    const config = await getBarkConfig();
+
+    if (!config.enabled) {
+      return { success: false, error: 'Bark通知未启用' };
+    }
+
+    if (!config.deviceKey) {
+      return { success: false, error: 'Bark Device Key 未配置' };
+    }
+
+    const payload = {
+      device_key: config.deviceKey,
+      title: String(title || '域名到期提醒'),
+      body: String(body || ''),
+      group: options.group || config.group || DEFAULT_BARK_GROUP,
+    };
+
+    if (config.sound) payload.sound = config.sound;
+    if (config.icon) payload.icon = config.icon;
+    if (options.url) payload.url = options.url;
+    if (options.level) payload.level = options.level;
+
+    const response = await fetch(`${normalizeBarkServerUrl(config.serverUrl)}/push`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const resultText = await response.text();
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `Bark请求失败：HTTP ${response.status} ${resultText}`,
+      };
+    }
+
+    let result = {};
+    try {
+      result = JSON.parse(resultText);
+    } catch (_) {
+      result = { raw: resultText };
+    }
+
+    return {
+      success: true,
+      data: result,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+// ================================
+// Bark通知功能
+// ================================
+
+async function sendBarkMessage(title, message) {
+  const barkServerUrl = typeof BARK_SERVER_URL !== 'undefined' && BARK_SERVER_URL
+    ? BARK_SERVER_URL.replace(/\/+$/, '')
+    : 'https://api.day.app';
+
+  const barkDeviceKey = typeof BARK_DEVICE_KEY !== 'undefined' && BARK_DEVICE_KEY
+    ? BARK_DEVICE_KEY
+    : '';
+
+  if (!barkDeviceKey) {
+    return;
+  }
+
+  const response = await fetch(barkServerUrl + '/push', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json;charset=utf-8',
+    },
+    body: JSON.stringify({
+      device_key: barkDeviceKey,
+      title: title,
+      body: message,
+      group: 'Domain-AutoCheck',
+      level: 'timeSensitive',
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error('发送Bark通知失败: HTTP ' + response.status);
+  }
+
+  return await response.json();
+}
+
+function buildBarkDomainsMessage(expiringDomains, expiredDomains) {
+  let message = '';
+
+  if (expiringDomains.length > 0) {
+    message += '域名到期提醒\n';
+    message += '===================\n\n';
+
+    expiringDomains.forEach((domain, index) => {
+      const expiryDate = new Date(domain.expiryDate);
+      const today = new Date();
+      const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (index > 0) {
+        message += '\n';
+      }
+
+      message += '域名: ' + domain.name + '\n';
+
+      if (domain.registrar) {
+        message += '注册厂商: ' + domain.registrar + '\n';
+      }
+
+      if (domain.registeredAccount) {
+        message += '注册账号: ' + domain.registeredAccount + '\n';
+      }
+
+      message += '剩余时间: ' + daysLeft + ' 天\n';
+      message += '到期日期: ' + formatDate(domain.expiryDate) + '\n';
+
+      if (domain.renewLink) {
+        message += '点击续期: ' + domain.renewLink + '\n';
+      } else {
+        message += '点击续期: 未设置续期链接\n';
+      }
+    });
+  }
+
+  if (expiringDomains.length > 0 && expiredDomains.length > 0) {
+    message += '\n━━━━━━━━━━━━━━━━\n\n';
+  }
+
+  if (expiredDomains.length > 0) {
+    message += '域名已过期提醒\n';
+    message += '=====================\n\n';
+
+    expiredDomains.forEach((domain, index) => {
+      const expiryDate = new Date(domain.expiryDate);
+      const today = new Date();
+      const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (index > 0) {
+        message += '\n';
+      }
+
+      message += '域名: ' + domain.name + '\n';
+
+      if (domain.registrar) {
+        message += '注册厂商: ' + domain.registrar + '\n';
+      }
+
+      if (domain.registeredAccount) {
+        message += '注册账号: ' + domain.registeredAccount + '\n';
+      }
+
+      message += '剩余时间: ' + daysLeft + ' 天\n';
+      message += '到期日期: ' + formatDate(domain.expiryDate) + '\n';
+
+      if (domain.renewLink) {
+        message += '点击续期: ' + domain.renewLink + '\n';
+      } else {
+        message += '点击续期: 未设置续期链接\n';
+      }
+    });
+  }
+
+  return message;
+}
+
+function buildBarkDateUpdatedMessage(updatedDomains) {
+  let message = '域名到期日期自动更新\n';
+  message += '======================\n\n';
+
+  updatedDomains.forEach((domain, index) => {
+    if (index > 0) {
+      message += '\n';
+    }
+
+    message += '域名: ' + domain.name + '\n';
+
+    if (domain.registrar) {
+      message += '注册厂商: ' + domain.registrar + '\n';
+    }
+
+    if (domain.registeredAccount) {
+      message += '注册账号: ' + domain.registeredAccount + '\n';
+    }
+
+    message += '原到期日期: ' + formatDate(domain.oldExpiryDate) + '\n';
+    message += '新到期日期: ' + formatDate(domain.newExpiryDate) + '\n';
+    message += '续期增加: ' + domain.addedDays + ' 天\n';
+  });
+
+  return message;
+}
 // 设置定时任务，检查即将到期的域名并发送通知（支持WHOIS自动查询更新到期日期）
 async function checkExpiringDomains() {
   const domains = await getDomains();
@@ -7029,23 +7297,52 @@ async function checkExpiringDomains() {
     await DOMAIN_MONITOR.put('domains', JSON.stringify(domains));
   }
   
-  // 第四步：发送Telegram通知
-  if (telegramConfig.enabled && 
-      ((telegramConfig.botToken || typeof TG_TOKEN !== 'undefined') && 
-       (telegramConfig.chatId || typeof TG_ID !== 'undefined'))) {
-    try {
-      // 发送过期提醒通知
-      if (expiringDomains.length > 0 || expiredDomains.length > 0) {
-        await sendCombinedDomainsNotification(telegramConfig, expiringDomains, expiredDomains);
-      }
-      // 发送域名到期日期自动更新通知
-      if (updatedDomains.length > 0) {
-        await sendDateUpdatedNotification(telegramConfig, updatedDomains);
-      }
-    } catch (error) {
-      // 静默处理Telegram通知发送失败
+
+// 第四步：发送通知
+
+// 发送Telegram通知
+if (telegramConfig.enabled && ((telegramConfig.botToken || typeof TG_TOKEN !== 'undefined') && (telegramConfig.chatId || typeof TG_ID !== 'undefined'))) {
+  try {
+    // 发送过期提醒通知
+    if (expiringDomains.length > 0 || expiredDomains.length > 0) {
+      await sendCombinedDomainsNotification(telegramConfig, expiringDomains, expiredDomains);
     }
+
+    // 发送域名到期日期自动更新通知
+    if (updatedDomains.length > 0) {
+      await sendDateUpdatedNotification(telegramConfig, updatedDomains);
+    }
+  } catch (error) {
+    // 静默处理Telegram通知发送失败
   }
+}
+
+// 发送Bark通知
+try {
+  if (expiringDomains.length > 0 || expiredDomains.length > 0) {
+    const barkMessage = buildBarkDomainsMessage(expiringDomains, expiredDomains);
+    await sendBarkMessage('域名到期提醒', barkMessage);
+  }
+
+  if (updatedDomains.length > 0) {
+    const barkUpdateMessage = buildBarkDateUpdatedMessage(updatedDomains);
+    await sendBarkMessage('域名到期日期自动更新', barkUpdateMessage);
+  }
+} catch (error) {
+  // 静默处理Bark通知发送失败
+}
+
+// Bark通知
+try {
+  if (expiringDomains.length > 0 || expiredDomains.length > 0) {
+    await sendCombinedDomainsBarkNotification(expiringDomains, expiredDomains);
+  }
+
+  if (updatedDomains.length > 0) {
+    await sendDateUpdatedBarkNotification(updatedDomains);
+  }
+} catch (error) {
+  // 静默处理Bark通知发送失败
 }
 
 // 发送域名通知（即将到期或已过期）
