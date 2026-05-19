@@ -7397,6 +7397,62 @@ async function sendDateUpdatedNotification(config, updatedDomains) {
 export default {
   async fetch(request, env, ctx) {
     injectEnv(env);
+	      // Bark测试接口：访问 /api/bark/test 手动发送测试通知
+      const barkTestUrl = new URL(request.url);
+      if (barkTestUrl.pathname === '/api/bark/test') {
+        const barkServerUrl = typeof BARK_SERVER_URL !== 'undefined' && BARK_SERVER_URL
+          ? BARK_SERVER_URL.replace(/\/+$/, '')
+          : 'https://api.day.app';
+
+        const barkDeviceKey = typeof BARK_DEVICE_KEY !== 'undefined' && BARK_DEVICE_KEY
+          ? BARK_DEVICE_KEY
+          : '';
+
+        if (!barkDeviceKey) {
+          return jsonResponse({
+            success: false,
+            error: 'BARK_DEVICE_KEY 未配置，请检查 Cloudflare 环境变量'
+          }, 400);
+        }
+
+        try {
+          const barkResponse = await fetch(barkServerUrl + '/push', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json;charset=utf-8',
+            },
+            body: JSON.stringify({
+              device_key: barkDeviceKey,
+              title: 'Domain-AutoCheck 测试通知',
+              body: '如果你收到这条消息，说明 Bark 通知配置成功。',
+              group: 'Domain-AutoCheck',
+              level: 'active',
+            }),
+          });
+
+          const barkResultText = await barkResponse.text();
+
+          if (!barkResponse.ok) {
+            return jsonResponse({
+              success: false,
+              error: 'Bark 请求失败',
+              status: barkResponse.status,
+              response: barkResultText
+            }, 500);
+          }
+
+          return jsonResponse({
+            success: true,
+            message: 'Bark测试通知已发送，请查看手机',
+            barkResponse: barkResultText
+          });
+        } catch (error) {
+          return jsonResponse({
+            success: false,
+            error: error.message
+          }, 500);
+        }
+      }	  
     return handleRequest(request);
   },
   async scheduled(event, env, ctx) {
