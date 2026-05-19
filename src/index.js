@@ -7397,7 +7397,7 @@ async function sendDateUpdatedNotification(config, updatedDomains) {
 export default {
   async fetch(request, env, ctx) {
     injectEnv(env);
-	      // Bark测试接口：访问 /api/bark/test 手动发送测试通知
+      // Bark测试接口：访问 /api/bark/test 手动发送测试通知
       const barkTestUrl = new URL(request.url);
       if (barkTestUrl.pathname === '/api/bark/test') {
         const barkServerUrl = typeof BARK_SERVER_URL !== 'undefined' && BARK_SERVER_URL
@@ -7452,7 +7452,7 @@ export default {
             error: error.message
           }, 500);
         }
-      }	  
+      }
     return handleRequest(request);
   },
   async scheduled(event, env, ctx) {
