@@ -125,6 +125,8 @@ Fork 部署可以保持与上游仓库的关联，方便后续通过 **Sync fork
 | LOGO_URL          | https://123abc.com/logo.svg                                                    |  ❌️  | 网站 logo，有需要可自行设置             |
 | BACKGROUND_URL    | https://123abc.com/img.jpg                                                     |  ❌️  | 背景图，有需要可自行设置                 |
 | WHOISJSON_API_KEY | 去 [WHOISJSON](https://whoisjson.com/) 免费注册获取 API，每月免费 1000 次查询 |  ❌️  | 仅支持一级域名的自动查询                 |
+| BARK_SERVER_URL   | https://bark.example.com
+| BARK_DEVICE_KEY   | abc123456
 
 ## ♻️代码更新方式
 功能基本稳定，通常只有一些体验类小修复，并不影响整体使用。  
