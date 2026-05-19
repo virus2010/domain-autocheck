@@ -6937,127 +6937,7 @@ async function sendTelegramMessage(config, message) {
   
   return await response.json();
 }
-// ================================
-// Bark 通知功能
-// ================================
 
-function normalizeBarkServerUrl(url) {
-  const value = String(url || '').trim() || DEFAULT_BARK_SERVER_URL;
-  return value.replace(/\/+$/, '');
-}
-
-function stripHtmlTags(value) {
-  return String(value || '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .trim();
-}
-
-async function getBarkConfig() {
-  const envConfig = {
-    enabled: Boolean(typeof BARK_DEVICE_KEY !== 'undefined' && BARK_DEVICE_KEY),
-    serverUrl: typeof BARK_SERVER_URL !== 'undefined' && BARK_SERVER_URL ? BARK_SERVER_URL : DEFAULT_BARK_SERVER_URL,
-    deviceKey: typeof BARK_DEVICE_KEY !== 'undefined' && BARK_DEVICE_KEY ? BARK_DEVICE_KEY : DEFAULT_BARK_DEVICE_KEY,
-    group: typeof BARK_GROUP !== 'undefined' && BARK_GROUP ? BARK_GROUP : DEFAULT_BARK_GROUP,
-    sound: typeof BARK_SOUND !== 'undefined' && BARK_SOUND ? BARK_SOUND : DEFAULT_BARK_SOUND,
-    icon: typeof BARK_ICON !== 'undefined' && BARK_ICON ? BARK_ICON : DEFAULT_BARK_ICON,
-  };
-
-  try {
-    const savedConfig = await DOMAIN_MONITOR.get('bark_config', 'json');
-    return {
-      ...envConfig,
-      ...(savedConfig || {}),
-      // 环境变量优先：如果设置了 BARK_DEVICE_KEY，则强制使用环境变量中的 key
-      deviceKey: envConfig.deviceKey || savedConfig?.deviceKey || '',
-      serverUrl: envConfig.serverUrl || savedConfig?.serverUrl || DEFAULT_BARK_SERVER_URL,
-      group: envConfig.group || savedConfig?.group || DEFAULT_BARK_GROUP,
-      sound: envConfig.sound || savedConfig?.sound || '',
-      icon: envConfig.icon || savedConfig?.icon || '',
-    };
-  } catch (error) {
-    return envConfig;
-  }
-}
-
-async function saveBarkConfig(config) {
-  const barkConfig = {
-    enabled: Boolean(config.enabled),
-    serverUrl: normalizeBarkServerUrl(config.serverUrl || DEFAULT_BARK_SERVER_URL),
-    deviceKey: String(config.deviceKey || '').trim(),
-    group: String(config.group || DEFAULT_BARK_GROUP).trim(),
-    sound: String(config.sound || '').trim(),
-    icon: String(config.icon || '').trim(),
-  };
-
-  await DOMAIN_MONITOR.put('bark_config', JSON.stringify(barkConfig));
-  return barkConfig;
-}
-
-async function sendBarkMessage(title, body, options = {}) {
-  try {
-    const config = await getBarkConfig();
-
-    if (!config.enabled) {
-      return { success: false, error: 'Bark通知未启用' };
-    }
-
-    if (!config.deviceKey) {
-      return { success: false, error: 'Bark Device Key 未配置' };
-    }
-
-    const payload = {
-      device_key: config.deviceKey,
-      title: String(title || '域名到期提醒'),
-      body: String(body || ''),
-      group: options.group || config.group || DEFAULT_BARK_GROUP,
-    };
-
-    if (config.sound) payload.sound = config.sound;
-    if (config.icon) payload.icon = config.icon;
-    if (options.url) payload.url = options.url;
-    if (options.level) payload.level = options.level;
-
-    const response = await fetch(`${normalizeBarkServerUrl(config.serverUrl)}/push`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const resultText = await response.text();
-
-    if (!response.ok) {
-      return {
-        success: false,
-        error: `Bark请求失败：HTTP ${response.status} ${resultText}`,
-      };
-    }
-
-    let result = {};
-    try {
-      result = JSON.parse(resultText);
-    } catch (_) {
-      result = { raw: resultText };
-    }
-
-    return {
-      success: true,
-      data: result,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message,
-    };
-  }
-}
 // ================================
 // Bark通知功能
 // ================================
@@ -7343,6 +7223,7 @@ try {
   }
 } catch (error) {
   // 静默处理Bark通知发送失败
+}
 }
 
 // 发送域名通知（即将到期或已过期）
